@@ -25,6 +25,10 @@ export function parseIbkrReport(csvText) {
     sections["Time Weighted Return History"],
     nav.rateOfReturn
   );
+  const historyReturn = latestFlowAdjustedReturn(navHistory);
+  if (Number.isFinite(historyReturn)) {
+    nav.rateOfReturn = historyReturn;
+  }
   const assetAllocation = summarizePositions(positions, "assetCategory");
   const currencyExposure = summarizePositions(positions, "currency");
   const warnings = buildWarnings(sections, nav, positions, tradeSummary);
@@ -718,6 +722,11 @@ function parseDailyReturnHistory(rows = [], navByDate = new Map()) {
       flowAdjusted: true
     };
   });
+}
+
+function latestFlowAdjustedReturn(navHistory = []) {
+  const rows = navHistory.filter((row) => row.flowAdjusted && Number.isFinite(row.returnRate));
+  return rows.length ? rows[rows.length - 1].returnRate : null;
 }
 
 function parsePlSummary(rows = [], trades = []) {

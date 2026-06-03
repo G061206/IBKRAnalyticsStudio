@@ -1,0 +1,10 @@
+name = "sp500-proxy"
+main = "index.js"
+compatibility_date = "2025-06-01"
+
+[[kv_namespaces]]
+binding = "SP500_KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+[triggers]
+crons = ["30 22 * * *"]

@@ -203,9 +203,11 @@ const FLEX_QUERY_ID_STORAGE_KEY = "ibkr-flex-query-id";
 const FLEX_CACHE_DB_NAME = "ibkr-analytics-cache";
 const FLEX_CACHE_STORE_NAME = "reports";
 const FLEX_CACHE_KEY = "latest-flex-report";
+const SP500_BENCHMARK_URL = "https://sp500-proxy.3368517784.workers.dev";
 
 let shareLogoImagePromise = null;
 let flexCacheDbPromise = null;
+let benchmarkRequestId = 0;
 
 const state = {
   data: null,
@@ -229,7 +231,8 @@ const state = {
   shareHideName: localStorage.getItem("ibkr-share-hide-name") === "1",
   shareHideNav: localStorage.getItem("ibkr-share-hide-nav") === "1",
   language: localStorage.getItem("ibkr-analytics-language") === "en" ? "en" : "zh",
-  theme: localStorage.getItem("ibkr-analytics-theme") === "dark" ? "dark" : "light"
+  theme: localStorage.getItem("ibkr-analytics-theme") === "dark" ? "dark" : "light",
+  benchmark: null
 };
 
 applyTheme();
@@ -509,6 +512,8 @@ function renderActiveTab() {
 function renderOverview(data) {
   const currency = data.baseCurrency || "USD";
   const totalPL = data.plSummary.total.total;
+  const twr = accountReturnRate(data);
+  data.nav.rateOfReturn = twr;
   const portfolioAllocation = buildPortfolioAllocation(data);
   return `
     <div class="content-stack">
@@ -534,7 +539,7 @@ function renderOverview(data) {
         </section>
         <section class="dashboard-card span-7 return-curve-card">
           <div class="card-header"><h2>收益率曲线</h2><span class="pill">${currency}</span></div>
-          ${renderReturnCurve(data, currency)}
+          ${renderReturnCurve(data, currency, state.benchmark)}
         </section>
         <section class="dashboard-card span-5">
           <div class="card-header"><h2>资产配置占比</h2><span class="pill">${currency}</span></div>
@@ -1046,7 +1051,63 @@ function renderAllocation(rows, currency) {
   `;
 }
 
-function renderReturnCurve(data, currency) {
+function buildBenchmarkRows(benchmark, portfolioRows) {
+  if (!benchmark || !benchmark.dates || !benchmark.closes || benchmark.closes.length < 2 || portfolioRows.length < 2) {
+    return null;
+  }
+
+  const firstPortfolioDate = portfolioRows[0].date;
+  const baseClose = findClosestClose(benchmark, firstPortfolioDate);
+  if (!baseClose) return null;
+
+  return portfolioRows.map((row) => {
+    const close = findClosestClose(benchmark, row.date);
+    if (close === null) return null;
+    const returnRate = ((close / baseClose) - 1) * 100;
+    return { date: row.date, returnRate, close };
+  }).filter(Boolean);
+}
+
+function findClosestClose(benchmark, targetDate) {
+  if (!benchmark.dates.length) return null;
+
+  let best = null;
+  let bestTime = -Infinity;
+  const targetTime = new Date(`${targetDate}T23:59:59Z`).getTime();
+
+  for (let i = 0; i < benchmark.dates.length; i++) {
+    const time = new Date(`${benchmark.dates[i]}T00:00:00Z`).getTime();
+    if (time <= targetTime && time > bestTime) {
+      bestTime = time;
+      best = benchmark.closes[i];
+    }
+  }
+
+  return best;
+}
+
+function buildBenchmarkPath(benchmarkRows, width, height, paddingLeft, paddingRight, paddingTop, paddingBottom, minValue, maxValue, zeroY) {
+  if (!benchmarkRows || benchmarkRows.length < 2) return "";
+
+  const chartRight = width - paddingRight;
+  const chartHeight = height - paddingTop - paddingBottom;
+  const xFor = (index) => paddingLeft + (index / (benchmarkRows.length - 1)) * (chartRight - paddingLeft);
+  const yFor = (value) => paddingTop + ((maxValue - value) / (maxValue - minValue)) * chartHeight;
+
+  const points = benchmarkRows.map((row, index) => ({
+    ...row,
+    x: xFor(index),
+    y: yFor(row.returnRate)
+  }));
+  const signedPaths = buildSignedReturnPaths(points, zeroY);
+
+  return [
+    ...signedPaths.positiveLines.map((path) => `<path class="return-benchmark return-benchmark-positive" d="${escapeAttribute(path)}"></path>`),
+    ...signedPaths.negativeLines.map((path) => `<path class="return-benchmark return-benchmark-negative" d="${escapeAttribute(path)}"></path>`)
+  ].join("");
+}
+
+function renderReturnCurve(data, currency, benchmark) {
   const rows = (data.navHistory || [])
     .filter((row) => Number.isFinite(row.nav) && Number.isFinite(row.returnRate))
     .slice();
@@ -1068,6 +1129,8 @@ function renderReturnCurve(data, currency) {
     `;
   }
 
+  const benchmarkRows = buildBenchmarkRows(benchmark, rows);
+
   const width = 680;
   const height = 250;
   const paddingLeft = 34;
@@ -1075,19 +1138,22 @@ function renderReturnCurve(data, currency) {
   const paddingTop = 24;
   const paddingBottom = 48;
   const chartHeight = height - paddingTop - paddingBottom;
-  const values = rows.map((row) => row.returnRate);
-  const rawMinValue = Math.min(0, ...values);
-  const rawMaxValue = Math.max(0, ...values);
+
+  const portfolioValues = rows.map((row) => row.returnRate);
+  const benchmarkValues = benchmarkRows ? benchmarkRows.map((row) => row.returnRate) : [];
+  const allValues = [...portfolioValues, ...benchmarkValues];
+  const rawMinValue = Math.min(0, ...allValues);
+  const rawMaxValue = Math.max(0, ...allValues);
   const axis = buildReturnAxis(rawMinValue, rawMaxValue);
   const minValue = axis.min;
   const maxValue = axis.max;
 
   const chartRight = width - paddingRight;
-  const xFor = (index) => paddingLeft + (index / Math.max(1, rows.length - 1)) * (chartRight - paddingLeft);
+  const xFor = (index, count) => paddingLeft + (index / Math.max(1, count - 1)) * (chartRight - paddingLeft);
   const yFor = (value) => paddingTop + ((maxValue - value) / (maxValue - minValue)) * chartHeight;
   const points = rows.map((row, index) => ({
     ...row,
-    x: xFor(index),
+    x: xFor(index, rows.length),
     y: yFor(row.returnRate)
   }));
   const zeroY = yFor(0);
@@ -1097,6 +1163,8 @@ function renderReturnCurve(data, currency) {
   const high = points.reduce((best, row) => row.returnRate > best.returnRate ? row : best, points[0]);
   const low = points.reduce((worst, row) => row.returnRate < worst.returnRate ? row : worst, points[0]);
   const gridValues = axis.ticks;
+
+  const benchmarkPath = buildBenchmarkPath(benchmarkRows, width, height, paddingLeft, paddingRight, paddingTop, paddingBottom, minValue, maxValue, zeroY);
 
   return `
     <div class="return-curve">
@@ -1129,11 +1197,19 @@ function renderReturnCurve(data, currency) {
           `;
         }).join("")}
         <line class="return-zero-line" x1="${paddingLeft}" y1="${zeroY.toFixed(2)}" x2="${chartRight}" y2="${zeroY.toFixed(2)}"></line>
+        ${benchmarkPath}
         ${signedPaths.positiveLines.map((path) => `<path class="return-line return-line-positive" d="${escapeAttribute(path)}"></path>`).join("")}
         ${signedPaths.negativeLines.map((path) => `<path class="return-line return-line-negative" d="${escapeAttribute(path)}"></path>`).join("")}
         <text class="return-axis-label" x="${paddingLeft}" y="${height - 12}">${escapeHtml(formatDate(firstPoint.date))}</text>
         <text class="return-axis-label is-end" x="${chartRight}" y="${height - 12}">${escapeHtml(formatDate(lastPoint.date))}</text>
       </svg>
+      ${benchmarkRows ? `
+        <div class="return-curve-legend">
+          <span class="legend-item legend-portfolio"><span class="legend-dot"></span>Portfolio</span>
+          <span class="legend-item legend-benchmark"><span class="legend-dot"></span>S&P 500</span>
+          <span class="legend-item legend-benchmark-value">${formatSignedPercent(benchmarkRows[benchmarkRows.length - 1].returnRate)}</span>
+        </div>
+      ` : ""}
       <p class="return-curve-note">按 IBKR 每日 TWR 累乘计算，已剔除入金、出金等外部现金流影响。</p>
     </div>
   `;
@@ -1796,6 +1872,7 @@ function parseText(text, sourceName, options = {}) {
     state.shareOpen = options.preserveView
       ? previousShareOpen
       : new URLSearchParams(window.location.search).get("share") === "1";
+    fetchBenchmark(parsed);
     renderDashboard();
     return true;
   } catch (error) {
@@ -1815,7 +1892,34 @@ function resetReport() {
   state.error = "";
   state.search = "";
   state.sourceName = "";
+  state.benchmark = null;
   renderUpload();
+}
+
+async function fetchBenchmark(parsed) {
+  const requestId = ++benchmarkRequestId;
+  state.benchmark = null;
+  const navHistory = parsed.navHistory || [];
+  const flowRows = navHistory.filter((row) => row.flowAdjusted && row.date);
+  if (flowRows.length < 2) return;
+
+  const startDate = flowRows[0].date;
+  const endDate = flowRows[flowRows.length - 1].date;
+
+  try {
+    const url = `${SP500_BENCHMARK_URL}?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
+    const response = await fetch(url);
+    if (!response.ok) return;
+    const json = await response.json();
+    if (requestId !== benchmarkRequestId || state.data !== parsed) return;
+    if (json.dates && json.closes && json.dates.length >= 2) {
+      if (startDate !== flowRows[0].date || endDate !== flowRows[flowRows.length - 1].date) return;
+      state.benchmark = json;
+      renderDashboard();
+    }
+  } catch {
+    // benchmark fetch is optional; silently skip on failure
+  }
 }
 
 function downloadJson(data) {
@@ -1938,7 +2042,7 @@ function buildLegacyShareModel(data) {
     totalPl: totalPl.total,
     realizedPl: totalPl.realized,
     unrealizedPl: totalPl.unrealized,
-    twr: data.nav.rateOfReturn,
+    twr: accountReturnRate(data),
     positions: data.positions.length,
     sections: Object.keys(data.sectionStats).length,
     allocation: buildPortfolioAllocation(data),
@@ -2481,6 +2585,15 @@ function displayWarning(warning) {
 
 function icon(name) {
   return `<svg aria-hidden="true" viewBox="0 0 24 24">${icons[name] || icons.analytics}</svg>`;
+}
+
+function accountReturnRate(data) {
+  const rows = Array.isArray(data?.navHistory) ? data.navHistory : [];
+  const twrRows = rows.filter((row) => row.flowAdjusted && Number.isFinite(row.returnRate));
+  if (twrRows.length) {
+    return twrRows[twrRows.length - 1].returnRate;
+  }
+  return Number.isFinite(data?.nav?.rateOfReturn) ? data.nav.rateOfReturn : 0;
 }
 
 function valueClass(value) {

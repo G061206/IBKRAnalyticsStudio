@@ -1609,6 +1609,60 @@ tbody tr:hover {
   line-height: 18px;
 }
 
+.return-curve-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 8px 0 -4px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-portfolio .legend-dot {
+  background: var(--positive);
+}
+
+.legend-benchmark .legend-dot {
+  background: #8b5cf6;
+  border: 1.5px solid #8b5cf6;
+}
+
+.legend-benchmark-value {
+  color: #c4b5fd;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.return-benchmark {
+  fill: none;
+  stroke-width: 1.35;
+  stroke-dasharray: none;
+  opacity: 0.95;
+}
+
+.return-benchmark-positive {
+  stroke: #8b5cf6;
+}
+
+.return-benchmark-negative {
+  stroke: #8b5cf6;
+}
+
 .return-curve-unavailable {
   display: grid;
   align-content: center;
