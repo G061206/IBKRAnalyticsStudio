@@ -250,14 +250,6 @@ https://sp500-proxy.3368517784.workers.dev/?start=2025-12-24&end=2026-06-02
 GET /admin/sync?key=<SYNC_SECRET>
 ```
 
-也可以使用 Bearer token：
-
-```powershell
-Invoke-WebRequest `
-  -Uri "https://sp500-proxy.3368517784.workers.dev/admin/sync" `
-  -Headers @{ Authorization = "Bearer <SYNC_SECRET>" }
-```
-
 WebView2 桌面端使用 `https://ibkr-analytics.local` 加载页面，Worker 的 CORS 白名单需要包含这个 origin，否则前端会拿不到 S&P 500 叠加线。
 
 ## 构建 Windows 应用
